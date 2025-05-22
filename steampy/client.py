@@ -448,3 +448,7 @@ class SteamClient:
         if convert_to_decimal:
             return Decimal(balance_dict[balance_dict_key]) / 100
         return balance_dict[balance_dict_key]
+
+    @property
+    def login_cookies(self):
+        return self._session.cookies
