@@ -23,5 +23,6 @@ setup(
         "requests",
         "beautifulsoup4",
         "rsa",
+        "curl_cffi>=0.6.0",
     ],
 )
