@@ -118,7 +118,7 @@ class AsyncLoginExecutor:
         for pass_data in parameters:
             pass_data['params'].update({'steamID': response_dict['steamID']})
             multipart_fields = {key: (None, str(value)) for key, value in pass_data['params'].items()}
-            await self.session.post(pass_data['url'], files=multipart_fields)
+            await self.session.post(pass_data['url'], multipart=multipart_fields)
 
     async def _update_steam_guard(self, login_response) -> None:
         client_id = login_response.json()['response']['client_id']
@@ -142,12 +142,12 @@ class AsyncLoginExecutor:
     async def _finalize_login(self):
         sessionid = self.session.cookies['sessionid']
         redir = f'{SteamUrl.COMMUNITY_URL}/login/home/?goto='
-        files = {
+        multipart = {
             'nonce': (None, self.refresh_token),
             'sessionid': (None, sessionid),
             'redir': (None, redir),
         }
         headers = {'Referer': redir, 'Origin': 'https://steamcommunity.com'}
-        return await self.session.post("https://login.steampowered.com/jwt/finalizelogin", headers=headers, files=files)
+        return await self.session.post("https://login.steampowered.com/jwt/finalizelogin", headers=headers, multipart=multipart)
 
 
