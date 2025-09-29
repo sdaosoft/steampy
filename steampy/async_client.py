@@ -5,6 +5,7 @@ import urllib.parse as urlparse
 
 from curl_cffi.requests import AsyncSession
 from bs4 import BeautifulSoup
+from curl_cffi.curl import CurlMime
 
 from steampy import guard
 from steampy.async_login import AsyncLoginExecutor
@@ -104,6 +105,7 @@ class AsyncSteamClient:
         response = await (self._session.get(url, params=params) if method == 'GET' else self._session.post(url, data=params))
         return response
 
+    @async_login_required
     async def openid_authenticate(self, loginform_url: str, user_agent: str | None = None) -> str:
         """Complete OpenID auth flow for external site using an incoming Steam loginform URL.
 
@@ -139,22 +141,21 @@ class AsyncSteamClient:
         if 'sessionidSecureOpenIDNonce' not in self._session.cookies.get_dict():
             self._session.cookies.set('sessionidSecureOpenIDNonce', nonce, domain='steamcommunity.com')
 
-        # Submit OpenID authorization
-        data = {
-            'action': 'steam_openid_login',
-            'openid.mode': 'checkid_setup',
-            'openidparams': openidparams,
-            'nonce': nonce,
-        }
+        # Submit OpenID authorization (multipart/form-data to match browser)
+        mime = CurlMime()
+        mime.addpart(name='action', data='steam_openid_login')
+        mime.addpart(name='openid.mode', data='checkid_setup')
+        mime.addpart(name='openidparams', data=openidparams)
+        mime.addpart(name='nonce', data=nonce)
         post_headers = {
             'Accept': headers['accept'],
             'Accept-Language': headers['accept-language'],
-            'Content-Type': 'application/x-www-form-urlencoded',
             'Origin': 'https://steamcommunity.com',
+            'Referer': loginform_url,
         }
         if user_agent:
             post_headers['User-Agent'] = user_agent
-        post_resp = await self._session.post('https://steamcommunity.com/openid/login', data=data, headers=post_headers, allow_redirects=False)
+        post_resp = await self._session.post('https://steamcommunity.com/openid/login', multipart=mime, headers=post_headers, allow_redirects=False)
         if post_resp.status_code != 302 or 'Location' not in post_resp.headers:
             raise ValueError(f'Unexpected response from OpenID login: {post_resp.status_code}')
 
