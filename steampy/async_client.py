@@ -4,6 +4,7 @@ import re
 import urllib.parse as urlparse
 
 from curl_cffi.requests import AsyncSession
+from bs4 import BeautifulSoup
 
 from steampy import guard
 from steampy.async_login import AsyncLoginExecutor
@@ -102,6 +103,64 @@ class AsyncSteamClient:
         url = f'{SteamUrl.API_URL}/{interface}/{api_method}/{version}'
         response = await (self._session.get(url, params=params) if method == 'GET' else self._session.post(url, data=params))
         return response
+
+    async def openid_authenticate(self, loginform_url: str, user_agent: str | None = None) -> str:
+        """Complete OpenID auth flow for external site using an incoming Steam loginform URL.
+
+        Steps:
+        - GET the `loginform_url` from the relying party (e.g., skinflow) which is hosted on steamcommunity.com
+        - Parse the form to extract `openidparams` and `nonce`
+        - Ensure `sessionidSecureOpenIDNonce` cookie is present (set from `nonce` if missing)
+        - POST to `https://steamcommunity.com/openid/login` with urlencoded data to authorize
+        - Follow the 302 Location back to the relying party and return the final URL
+        """
+        headers = {
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'accept-language': 'en-US,en;q=0.9',
+            'upgrade-insecure-requests': '1',
+        }
+        if user_agent:
+            headers['user-agent'] = user_agent
+
+        # Fetch login form page (steamcommunity.com/openid/loginform)
+        form_resp = await self._session.get(loginform_url, headers=headers)
+        soup = BeautifulSoup(form_resp.text, 'html.parser')
+        form = soup.find('form', {'id': 'openidForm'})
+        if not form:
+            raise ValueError('openidForm not found on login form page')
+        openidparams_input = form.find('input', {'name': 'openidparams'})
+        nonce_input = form.find('input', {'name': 'nonce'})
+        if not openidparams_input or not nonce_input:
+            raise ValueError('Required inputs (openidparams, nonce) not found on login form page')
+        openidparams = openidparams_input['value']
+        nonce = nonce_input['value']
+
+        # Ensure sessionidSecureOpenIDNonce cookie
+        if 'sessionidSecureOpenIDNonce' not in self._session.cookies.get_dict():
+            self._session.cookies.set('sessionidSecureOpenIDNonce', nonce, domain='steamcommunity.com')
+
+        # Submit OpenID authorization
+        data = {
+            'action': 'steam_openid_login',
+            'openid.mode': 'checkid_setup',
+            'openidparams': openidparams,
+            'nonce': nonce,
+        }
+        post_headers = {
+            'Accept': headers['accept'],
+            'Accept-Language': headers['accept-language'],
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': 'https://steamcommunity.com',
+        }
+        if user_agent:
+            post_headers['User-Agent'] = user_agent
+        post_resp = await self._session.post('https://steamcommunity.com/openid/login', data=data, headers=post_headers, allow_redirects=False)
+        if post_resp.status_code != 302 or 'Location' not in post_resp.headers:
+            raise ValueError(f'Unexpected response from OpenID login: {post_resp.status_code}')
+
+        redirect_url = post_resp.headers['Location']
+        final = await self._session.get(redirect_url, allow_redirects=True)
+        return final.url
 
     @async_login_required
     async def get_my_inventory(self, game: GameOptions, merge: bool = True, count: int = 5000) -> dict:
