@@ -82,8 +82,9 @@ class AsyncSteamClient:
         self._access_token = self._set_access_token()
 
     def _set_access_token(self) -> str:
-        steam_login_secure_cookies = [cookie for cookie in self._session.cookies if cookie.name == 'steamLoginSecure']
-        cookie_value = steam_login_secure_cookies[0].value
+        cookie_value = self._session.cookies.get_dict().get('steamLoginSecure')
+        if not cookie_value:
+            raise ValueError('steamLoginSecure cookie not present')
         decoded_cookie_value = urlparse.unquote(cookie_value)
         access_token_parts = decoded_cookie_value.split('||')
         if len(access_token_parts) < 2:
