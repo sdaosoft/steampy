@@ -3,7 +3,7 @@ from __future__ import annotations
 from base64 import b64encode
 from http import HTTPStatus
 
-from curl_cffi.requests import AsyncSession
+from curl_cffi.requests import AsyncSession, MultipartEncoder
 from rsa import PublicKey, encrypt
 
 from steampy import guard
@@ -117,8 +117,9 @@ class AsyncLoginExecutor:
             raise Exception('Cannot perform redirects after login, no parameters fetched')
         for pass_data in parameters:
             pass_data['params'].update({'steamID': response_dict['steamID']})
-            multipart_fields = {key: (None, str(value)) for key, value in pass_data['params'].items()}
-            await self.session.post(pass_data['url'], multipart=multipart_fields)
+            encoder = MultipartEncoder(fields={key: str(value) for key, value in pass_data['params'].items()})
+            headers = {'Content-Type': encoder.content_type}
+            await self.session.post(pass_data['url'], multipart=encoder, headers=headers)
 
     async def _update_steam_guard(self, login_response) -> None:
         client_id = login_response.json()['response']['client_id']
@@ -142,12 +143,16 @@ class AsyncLoginExecutor:
     async def _finalize_login(self):
         sessionid = self.session.cookies['sessionid']
         redir = f'{SteamUrl.COMMUNITY_URL}/login/home/?goto='
-        multipart = {
-            'nonce': (None, self.refresh_token),
-            'sessionid': (None, sessionid),
-            'redir': (None, redir),
+        encoder = MultipartEncoder(fields={
+            'nonce': self.refresh_token,
+            'sessionid': sessionid,
+            'redir': redir,
+        })
+        headers = {
+            'Referer': redir,
+            'Origin': 'https://steamcommunity.com',
+            'Content-Type': encoder.content_type,
         }
-        headers = {'Referer': redir, 'Origin': 'https://steamcommunity.com'}
-        return await self.session.post("https://login.steampowered.com/jwt/finalizelogin", headers=headers, multipart=multipart)
+        return await self.session.post("https://login.steampowered.com/jwt/finalizelogin", headers=headers, multipart=encoder)
 
 
