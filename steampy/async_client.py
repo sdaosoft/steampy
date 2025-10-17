@@ -203,7 +203,11 @@ class AsyncSteamClient:
             'partner': partner_id,
             'captcha': '',
         }
-        headers = {'Referer': f'{SteamUrl.COMMUNITY_URL}/tradeoffer/{trade_offer_id}'}
+        headers = {
+            'Referer': f'{SteamUrl.COMMUNITY_URL}/tradeoffer/{trade_offer_id}',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Origin': SteamUrl.COMMUNITY_URL
+        }
         response = (await self._session.post(accept_url, data=params, headers=headers)).json()
         if response.get('needs_mobile_confirmation', False):
             confirmation_executor = AsyncConfirmationExecutor(
