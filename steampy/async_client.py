@@ -230,4 +230,6 @@ class AsyncSteamClient:
             return Decimal(balance_dict[balance_dict_key]) / 100
         return balance_dict[balance_dict_key]
 
+    async def close(self):
+        await self._session.close()
 
