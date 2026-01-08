@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import urllib.parse as urlparse
 
@@ -10,11 +11,12 @@ from curl_cffi.curl import CurlMime
 from steampy import guard
 from steampy.async_login import AsyncLoginExecutor
 from steampy.async_market import AsyncSteamMarket
-from steampy.exceptions import InvalidCredentials
-from steampy.models import GameOptions, SteamUrl
+from steampy.exceptions import ApiException, InvalidCredentials
+from steampy.models import GameOptions, SteamUrl, TradeOfferState
 from steampy.async_utils import async_login_required
 from steampy.utils import (
     merge_items_with_descriptions_from_inventory,
+    merge_items_with_descriptions_from_offers,
     text_between,
 )
 import re
@@ -229,6 +231,74 @@ class AsyncSteamClient:
         if convert_to_decimal:
             return Decimal(balance_dict[balance_dict_key]) / 100
         return balance_dict[balance_dict_key]
+
+    async def get_trade_offers_summary(self) -> dict:
+        params = {'key': self._api_key}
+        response = await self.api_call('GET', 'IEconService', 'GetTradeOffersSummary', 'v1', params)
+        return response.json()
+
+    async def get_trade_offers(
+        self,
+        merge: bool = True,
+        get_sent_offers: bool = True,
+        get_received_offers: bool = True,
+        use_webtoken: bool = False,
+        max_retry: int = 5,
+    ) -> dict:
+        params = {
+            'key' if not use_webtoken else 'access_token': self._api_key if not use_webtoken else self._access_token,
+            'get_sent_offers': int(get_sent_offers),
+            'get_received_offers': int(get_received_offers),
+            'get_descriptions': 1,
+            'language': 'english',
+            'active_only': 1,
+            'historical_only': 0,
+            'time_historical_cutoff': '',
+        }
+
+        response = await self._try_to_get_trade_offers(params, max_retry)
+        if response is None:
+            raise ApiException('Cannot get proper json from get_trade_offers method')
+        response_with_active_offers = self._filter_non_active_offers(response)
+        if merge:
+            return merge_items_with_descriptions_from_offers(response_with_active_offers)
+        else:
+            return response_with_active_offers
+
+    async def _try_to_get_trade_offers(self, params: dict, max_retry: int) -> dict | None:
+        response = None
+        for _ in range(max_retry):
+            try:
+                api_response = await self.api_call('GET', 'IEconService', 'GetTradeOffers', 'v1', params)
+                response = api_response.json()
+                break
+            except json.decoder.JSONDecodeError:
+                await asyncio.sleep(2)
+                continue
+        return response
+
+    @staticmethod
+    def _filter_non_active_offers(offers_response: dict) -> dict:
+        offers_received = offers_response['response'].get('trade_offers_received', [])
+        offers_sent = offers_response['response'].get('trade_offers_sent', [])
+
+        offers_response['response']['trade_offers_received'] = list(
+            filter(lambda offer: offer['trade_offer_state'] == TradeOfferState.Active, offers_received),
+        )
+        offers_response['response']['trade_offers_sent'] = list(
+            filter(lambda offer: offer['trade_offer_state'] == TradeOfferState.Active, offers_sent),
+        )
+        return offers_response
+
+    async def get_open_sent_offers_count(self) -> int:
+        offers = await self.get_trade_offers(
+            get_sent_offers=True,
+            get_received_offers=False,
+            merge=False,
+            use_webtoken=True,
+        )
+        sent_offers = offers['response'].get('trade_offers_sent', [])
+        return len(sent_offers)
 
     async def close(self):
         await self._session.close()
